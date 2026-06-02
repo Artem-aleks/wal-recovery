@@ -1,0 +1,11 @@
+Package: wal-recovery
+Version: 1.0.0
+Section: database
+Priority: optional
+Architecture: all
+Depends:
+Maintainer: Алексанов Артём <student@university.ru>
+Description: Утилита восстановления удалённых записей из PostgreSQL и MySQL
+ Читает WAL-логи PostgreSQL через wal2json и binary log MySQL
+ для поиска и восстановления случайно удалённых строк.
+ Поддерживает графический интерфейс (GUI) и командную строку (CLI).

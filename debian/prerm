@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+echo "[WAL Recovery] Удаление..."
+[ -f /usr/local/bin/wal-recovery ] && rm -f /usr/local/bin/wal-recovery && \
+    echo "  ✔ Удалён /usr/local/bin/wal-recovery"
+[ -f /usr/share/applications/wal-recovery.desktop ] && \
+    rm -f /usr/share/applications/wal-recovery.desktop
+command -v update-desktop-database &>/dev/null && \
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+echo ""
+echo "  ℹ  Конфиг /etc/wal-recovery/ сохранён."
+echo "  ℹ  Для полного удаления: sudo rm -rf /etc/wal-recovery /opt/wal-recovery"
+echo ""

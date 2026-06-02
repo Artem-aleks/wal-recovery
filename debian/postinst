@@ -1,0 +1,161 @@
+#!/bin/bash
+# postinst — выполняется автоматически после apt install
+set -e
+
+INSTALL_DIR="/opt/wal-recovery"
+BIN_PATH="/usr/local/bin/wal-recovery"
+CONF_DIR="/etc/wal-recovery"
+CONF_FILE="$CONF_DIR/databases.conf"
+
+echo ""
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║         WAL Recovery Tool — Установка               ║"
+echo "╚══════════════════════════════════════════════════════╝"
+echo ""
+
+# ==========================================================================
+# 1. Находим Python 3.10+
+# ==========================================================================
+echo "[1/4] Проверяем Python..."
+
+PYTHON=""
+for PY in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$PY" &>/dev/null; then
+        MAJ=$("$PY" -c "import sys; print(sys.version_info.major)" 2>/dev/null || echo "0")
+        MIN=$("$PY" -c "import sys; print(sys.version_info.minor)" 2>/dev/null || echo "0")
+        if [ "$MAJ" -ge 3 ] && [ "$MIN" -ge 10 ]; then
+            PYTHON="$PY"
+            break
+        fi
+    fi
+done
+
+[ -z "$PYTHON" ] && PYTHON="python3"
+echo "    ✔ Python: $($PYTHON --version)"
+
+# ==========================================================================
+# 2. Устанавливаем pip если нет
+# ==========================================================================
+echo "[2/4] Проверяем pip...
+
+# Пробуем через apt (самый надёжный способ на Debian/Ubuntu)
+if ! "$PYTHON" -m pip --version &>/dev/null 2>&1; then
+    apt-get install -y python3-pip 2>/dev/null || true
+fi"
+
+if ! "$PYTHON" -m pip --version &>/dev/null 2>&1; then
+    echo "    pip не найден, устанавливаем через bootstrap..."
+    if command -v curl &>/dev/null; then
+        curl -sS https://bootstrap.pypa.io/get-pip.py | "$PYTHON" - --break-system-packages
+    elif command -v wget &>/dev/null; then
+        wget -qO- https://bootstrap.pypa.io/get-pip.py | "$PYTHON" - --break-system-packages
+    else
+        echo "    ОШИБКА: нет curl/wget для загрузки pip"
+        exit 1
+    fi
+fi
+echo "    ✔ pip: $($PYTHON -m pip --version | cut -d' ' -f1-2)"
+
+# ==========================================================================
+# 3. Устанавливаем Python-библиотеки напрямую (без venv)
+# ==========================================================================
+echo "[3/4] Устанавливаем Python-библиотеки..."
+
+"$PYTHON" -m pip install --quiet --break-system-packages \
+    psycopg2-binary \
+    pymysql \
+    "mysql-replication==0.45.1" \
+    PyQt6 \
+    2>/dev/null || \
+"$PYTHON" -m pip install --quiet \
+    psycopg2-binary \
+    pymysql \
+    "mysql-replication==0.45.1" \
+    PyQt6
+
+echo "    ✔ psycopg2-binary, pymysql, mysql-replication, PyQt6"
+
+# Патч mysql-replication для MySQL 8.0.22+ и 9.x
+BINLOGSTREAM=$("$PYTHON" -c \
+    "import pymysqlreplication, os; \
+     print(os.path.join(os.path.dirname(pymysqlreplication.__file__), 'binlogstream.py'))" \
+    2>/dev/null || echo "")
+
+if [ -f "$BINLOGSTREAM" ]; then
+    sed -i 's/SHOW MASTER STATUS/SHOW BINARY LOG STATUS/g' "$BINLOGSTREAM"
+    echo "    ✔ Патч mysql-replication применён"
+fi
+
+# ==========================================================================
+# 4. Команда wal-recovery
+# ==========================================================================
+echo "[4/4] Создаём команду wal-recovery..."
+
+cat > "$BIN_PATH" << WRAPPER
+#!/bin/bash
+export PYTHONPATH="$INSTALL_DIR/src"
+exec "$PYTHON" "$INSTALL_DIR/src/main.py" "\$@"
+WRAPPER
+
+chmod 755 "$BIN_PATH"
+echo "    ✔ /usr/local/bin/wal-recovery"
+
+# .desktop для меню приложений
+mkdir -p /usr/share/applications
+cat > /usr/share/applications/wal-recovery.desktop << DESKTOP
+[Desktop Entry]
+Version=1.0
+Name=WAL Recovery Tool
+Comment=Восстановление удалённых записей из PostgreSQL/MySQL
+Exec=wal-recovery
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Development;Database;Utility;
+DESKTOP
+command -v update-desktop-database &>/dev/null && \
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+
+# Конфиг
+mkdir -p "$CONF_DIR"
+if [ ! -f "$CONF_FILE" ]; then
+    cat > "$CONF_FILE" << CONF
+# WAL Recovery Tool — конфигурация подключений
+# /etc/wal-recovery/databases.conf
+
+[postgresql]
+host     = localhost
+port     = 5432
+user     = admin
+password = oksat
+databases = shop_demo, employees_demo
+
+[mysql]
+host     = localhost
+port     = 3306
+user     = admin
+password = oksat
+databases = library_demo, clinic_demo
+CONF
+    chmod 644 "$CONF_FILE"
+fi
+
+# ==========================================================================
+# Автоматическая установка баз данных
+# ==========================================================================
+if [ -f "/opt/wal-recovery/setup_databases.sh" ]; then
+    echo ""
+    echo "Настраиваем базы данных..."
+    bash /opt/wal-recovery/setup_databases.sh 2>/dev/null ||         warn "Настройка БД завершилась с ошибками — запустите вручную:"
+        echo "     sudo bash /opt/wal-recovery/setup_databases.sh"
+fi
+
+echo ""
+echo "══════════════════════════════════════════════════════"
+echo "  ✅  WAL Recovery Tool успешно установлен!"
+echo "══════════════════════════════════════════════════════"
+echo ""
+echo "  Запуск GUI:   wal-recovery"
+echo "  Запуск CLI:   wal-recovery --cli"
+echo "  Конфиг:       $CONF_FILE"
+echo ""
